@@ -11,9 +11,19 @@ app.whenReady().then(() => {
     height: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+  
+  // check authentication token
+  mainWindow.webContents.once('dom-ready', () => {
+    mainWindow.webContents.executeJavaScript(`
+      if (!localStorage.getItem('token')) {
+        window.location.href = './renderer/login.html';
+      }
+    `);
   });
 
   mainWindow.loadFile('./renderer/dashboard.html');

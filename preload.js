@@ -1,4 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const fs = require('fs');
+const path = require('path');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   sendMessage: (channel, data) => {
@@ -9,4 +11,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     console.log(`Listening for messages on channel: ${channel}`);
     ipcRenderer.on(channel, (event, ...args) => callback(...args));
   },
+  fetchUserInfo: async () => {
+    return ipcRenderer.invoke('get-user-info');
+  },
+  fs: fs, // Expose the fs module
+  path: path, // Expose the path module (if needed)
 });

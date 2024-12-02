@@ -18,6 +18,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     const data = await loginUser(username, password);
     if (data.token) {
       localStorage.setItem('token', data.token); // Save token
+      localStorage.setItem('username', username); // Save username
       window.location.href = './dashboard.html'; // Redirect to dashboard
     } else {
       alert('Login failed: Incorrect credentials.');

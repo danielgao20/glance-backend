@@ -4,27 +4,45 @@ const path = require('path');
 const fs = require('fs');
 const Screenshot = require('../models/Screenshot');
 const axios = require('axios');
+const mongoose = require('mongoose');
 
 const router = express.Router();
 
-// Multer setup
+// Multer setup: dynamically create the uploads folder if it doesn't exist
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, '../uploads'),
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
   filename: (req, file, cb) => {
     cb(null, `${Date.now()}-${file.originalname}`);
   },
 });
 const upload = multer({ storage });
 
-// Add static route for serving files
+// Serve static files from the uploads directory
 router.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-router.post('/screenshots', upload.single('screenshot'), async (req, res) => {
+// Main POST route to handle screenshots
+router.post('/', upload.single('screenshot'), async (req, res) => {
+  if (!req.file) {
+    console.error('No file uploaded');
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
   const { user_id } = req.body;
 
   try {
-    const imagePath = `/uploads/${req.file.filename}`;
+    if (!mongoose.Types.ObjectId.isValid(user_id)) {
+      return res.status(400).json({ error: 'Invalid user_id format' });
+    }
+    const objectId = new mongoose.Types.ObjectId(user_id);
 
+    const imagePath = `/uploads/${req.file.filename}`;
+    
     // Generate description using OpenAI API
     const prompt = 'Provide a concise one-sentence task title for the given screenshot.';
     const openaiResponse = await axios.post(
@@ -44,9 +62,9 @@ router.post('/screenshots', upload.single('screenshot'), async (req, res) => {
 
     const description = openaiResponse.data.choices[0].message.content.trim();
 
-    // Save data to MongoDB
+    // Save the screenshot data to MongoDB
     const newScreenshot = new Screenshot({
-      user_id,
+      user_id: objectId,
       screenshot_url: imagePath,
       description,
       created_at: new Date(),
@@ -54,7 +72,9 @@ router.post('/screenshots', upload.single('screenshot'), async (req, res) => {
 
     await newScreenshot.save();
 
-    req.io.emit('new_screenshot', newScreenshot);
+    console.log('Screenshot saved to database:', newScreenshot);
+
+    // Send the response back to the client
     res.status(201).json(newScreenshot);
   } catch (error) {
     console.error('Error handling screenshot:', error);
