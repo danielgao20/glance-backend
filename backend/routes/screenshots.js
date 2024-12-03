@@ -1,103 +1,89 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const multer = require('multer');
-const path = require('path');
 const fs = require('fs');
-const Screenshot = require('../models/Screenshot');
-const axios = require('axios');
-const Tesseract = require('tesseract.js'); // OCR library
+const path = require('path');
+const { GridFSBucket } = require('mongodb');
+const dotenv = require('dotenv');
 
+dotenv.config();
 const router = express.Router();
+const upload = multer({ dest: 'temp/' }); // Temporary storage for incoming files
 
-// Multer setup: dynamically create the uploads folder if it doesn't exist
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
-    }
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    cb(null, `screenshot-${Date.now()}.jpg`);
-  },
-});
-const upload = multer({ storage });
+const mongoURI = process.env.MONGO_URI;
 
-// serve static files from the uploads directory
-router.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+if (!mongoURI) {
+  console.error('MongoDB URI is not defined in the .env file');
+  process.exit(1);
+}
 
-// main POST route to handle screenshots
+// POST route for saving screenshots
 router.post('/', upload.single('screenshot'), async (req, res) => {
-  const { username, filename } = req.body;
-
-  if (!req.file) {
-    console.error('No file uploaded');
-    return res.status(400).json({ error: 'No file uploaded' });
-  }
-
-  if (!username || !filename) {
-    console.error('Missing username or filename');
-    return res.status(400).json({ error: 'Missing username or filename' });
-  }
-
   try {
-    const uploadPath = path.join(__dirname, '../uploads', filename);
-    fs.renameSync(req.file.path, uploadPath);
-    console.log('File saved at:', uploadPath);
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
 
-    // extract text from the screenshot using Tesseract.js
-    console.log('Starting OCR process...');
-    const ocrResult = await Tesseract.recognize(uploadPath, 'eng');
-    const extractedText = ocrResult.data.text;
+    const conn = mongoose.connection;
+    const gfs = new GridFSBucket(conn.db, { bucketName: 'screenshots' });
 
-    console.log('Extracted Text:', extractedText);
-
-    // generate description using OpenAI API
-    const prompt = `
-      Below is text extracted from a screenshot. Analyze it and generate a concise one-sentence task description based on the content:
-
-      Extracted Text:
-      ${extractedText}
-    `;
-
-    const openaiResponse = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4-turbo',
-        messages: [
-          { role: 'system', content: 'Generate concise descriptions.' },
-          { role: 'user', content: prompt },
-        ],
-        max_tokens: 100,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    const description = openaiResponse.data.choices[0].message.content.trim();
-
-    // save screenshot details to MongoDB
-    const newScreenshot = new Screenshot({
-      username,
-      screenshot_url: `/uploads/${filename}`,
-      description,
-      created_at: new Date(),
+    const filename = `${Date.now()}-${req.file.originalname}`;
+    const filePath = path.resolve(req.file.path);
+    const uploadStream = gfs.openUploadStream(filename, {
+      metadata: { username: req.body.username },
     });
 
-    await newScreenshot.save();
-
-    console.log('Screenshot saved to database:', newScreenshot);
-
-    res.status(201).json(newScreenshot);
+    // Pipe the file to GridFS
+    fs.createReadStream(filePath)
+      .pipe(uploadStream)
+      .on('error', (err) => {
+        console.error('Error during upload to GridFS:', err);
+        res.status(500).json({ error: 'Failed to upload screenshot' });
+      })
+      .on('finish', () => {
+        console.log('File uploaded successfully:', uploadStream.id);
+        fs.unlinkSync(filePath); // Remove temporary file
+        res.status(201).json({
+          username: req.body.username,
+          fileId: uploadStream.id,
+          description: 'Hardcoded description for now.',
+        });
+      });
   } catch (error) {
-    console.error('Error handling screenshot:', error.message);
+    console.error('Unexpected error:', error.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET route for fetching screenshots metadata
+router.get('/', async (req, res) => {
+  try {
+    const conn = mongoose.connection;
+    const gfs = new GridFSBucket(conn.db, { bucketName: 'screenshots' });
+
+    const files = await gfs.find().toArray();
+    res.status(200).json(files.map((file) => ({
+      username: file.metadata?.username || 'Unknown',
+      description: 'Hardcoded description for now.',
+      fileId: file._id,
+    })));
+  } catch (error) {
+    console.error('Error fetching screenshots:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
 
+// GET route for fetching image by file ID
+router.get('/image/:id', (req, res) => {
+  const conn = mongoose.connection;
+  const gfs = new GridFSBucket(conn.db, { bucketName: 'screenshots' });
+
+  const fileId = new mongoose.Types.ObjectId(req.params.id);
+
+  gfs.openDownloadStream(fileId).pipe(res).on('error', (err) => {
+    console.error('Error streaming image:', err.message);
+    res.status(404).json({ error: 'Image not found' });
+  });
+});
 
 module.exports = router;

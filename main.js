@@ -16,20 +16,21 @@ app.whenReady().then(() => {
       nodeIntegration: false,
     },
   });
-  
-  // check authentication token
+
+  // Load the dashboard initially
+  mainWindow.loadFile(path.join(__dirname, 'renderer', 'dashboard.html'));
+
+  // Redirect to login page if no authentication token is found
   mainWindow.webContents.once('dom-ready', () => {
     mainWindow.webContents.executeJavaScript(`
       if (!localStorage.getItem('token')) {
-        window.location.href = './renderer/login.html';
+        window.location.href = '${path.resolve(__dirname, 'renderer', 'login.html').replace(/\\/g, '/')}';
       }
     `);
   });
-
-  mainWindow.loadFile('./renderer/dashboard.html');
 });
 
-// screenshot capture request handler - save screenshots to backend/uploads
+// Screenshot capture request handler - save screenshots to backend/uploads
 ipcMain.on('capture-screenshot', async (event) => {
   console.log('Received capture-screenshot request from renderer');
   try {
@@ -41,7 +42,7 @@ ipcMain.on('capture-screenshot', async (event) => {
     await screenshot({ filename: screenshotPath });
     console.log('Screenshot captured at:', screenshotPath);
 
-    // send the screenshot path back to the renderer
+    // Send the screenshot path back to the renderer
     event.sender.send('screenshot-captured', screenshotPath);
   } catch (error) {
     console.error('Error capturing screenshot:', error);
