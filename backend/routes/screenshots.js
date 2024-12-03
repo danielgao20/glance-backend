@@ -1,19 +1,22 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const multer = require('multer');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 const { GridFSBucket } = require('mongodb');
+const Tesseract = require('tesseract.js'); // OCR library
+const axios = require('axios');
 const dotenv = require('dotenv');
+const mongoose = require('mongoose');
 
 dotenv.config();
 const router = express.Router();
 const upload = multer({ dest: 'temp/' }); // Temporary storage for incoming files
 
 const mongoURI = process.env.MONGO_URI;
+const openaiAPIKey = process.env.OPENAI_API_KEY;
 
-if (!mongoURI) {
-  console.error('MongoDB URI is not defined in the .env file');
+if (!mongoURI || !openaiAPIKey) {
+  console.error('Environment variables MONGO_URI and OPENAI_API_KEY must be defined.');
   process.exit(1);
 }
 
@@ -40,13 +43,26 @@ router.post('/', upload.single('screenshot'), async (req, res) => {
         console.error('Error during upload to GridFS:', err);
         res.status(500).json({ error: 'Failed to upload screenshot' });
       })
-      .on('finish', () => {
+      .on('finish', async () => {
         console.log('File uploaded successfully:', uploadStream.id);
-        fs.unlinkSync(filePath); // Remove temporary file
+
+        // Perform OCR on the saved file
+        console.log('Starting OCR process...');
+        const ocrResult = await Tesseract.recognize(filePath, 'eng');
+        const extractedText = ocrResult.data.text;
+
+        console.log('Extracted Text:', extractedText);
+
+        // Generate description using OpenAI API
+        const description = await generateDescription(extractedText);
+
+        // Clean up temporary file
+        fs.unlinkSync(filePath);
+
         res.status(201).json({
           username: req.body.username,
           fileId: uploadStream.id,
-          description: 'Hardcoded description for now.',
+          description,
         });
       });
   } catch (error) {
@@ -64,7 +80,7 @@ router.get('/', async (req, res) => {
     const files = await gfs.find().toArray();
     res.status(200).json(files.map((file) => ({
       username: file.metadata?.username || 'Unknown',
-      description: 'Hardcoded description for now.',
+      description: file.metadata?.description || 'No description available',
       fileId: file._id,
     })));
   } catch (error) {
@@ -85,5 +101,42 @@ router.get('/image/:id', (req, res) => {
     res.status(404).json({ error: 'Image not found' });
   });
 });
+
+// Function to generate description using OpenAI API
+async function generateDescription(extractedText) {
+  try {
+    const prompt = `
+      Below is text extracted from a screenshot. Analyze it and generate a concise one-sentence task description based on the content:
+
+      Extracted Text:
+      ${extractedText}
+    `;
+
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: 'gpt-4-turbo',
+        messages: [
+          { role: 'system', content: 'Generate concise descriptions.' },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 100,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${openaiAPIKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const description = response.data.choices[0].message.content.trim();
+    console.log('Generated description:', description);
+    return description || 'Description could not be generated.';
+  } catch (error) {
+    console.error('Error generating description:', error.message);
+    return 'Description generation failed.';
+  }
+}
 
 module.exports = router;
