@@ -14,6 +14,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchUserInfo: async () => {
     return ipcRenderer.invoke('get-user-info');
   },
-  fs: fs, // Expose the fs module
-  path: path, // Expose the path module (if needed)
+  fs: fs.promises,
+  path: path,
 });

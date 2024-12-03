@@ -4,8 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const Screenshot = require('../models/Screenshot');
 const axios = require('axios');
-const mongoose = require('mongoose');
-const Tesseract = require('tesseract.js'); // for OCR lol
+const Tesseract = require('tesseract.js'); // OCR library
 
 const router = express.Router();
 
@@ -19,40 +18,41 @@ const storage = multer.diskStorage({
     cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
+    cb(null, `screenshot-${Date.now()}.jpg`);
   },
 });
 const upload = multer({ storage });
 
-// Serve static files from the uploads directory
+// serve static files from the uploads directory
 router.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Main POST route to handle screenshots
+// main POST route to handle screenshots
 router.post('/', upload.single('screenshot'), async (req, res) => {
+  const { username, filename } = req.body;
+
   if (!req.file) {
     console.error('No file uploaded');
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
-  const { user_id } = req.body;
+  if (!username || !filename) {
+    console.error('Missing username or filename');
+    return res.status(400).json({ error: 'Missing username or filename' });
+  }
 
   try {
-    // Validate and convert user_id to ObjectId
-    if (!mongoose.Types.ObjectId.isValid(user_id)) {
-      return res.status(400).json({ error: 'Invalid user_id format' });
-    }
-    const objectId = new mongoose.Types.ObjectId(user_id);
+    const uploadPath = path.join(__dirname, '../uploads', filename);
+    fs.renameSync(req.file.path, uploadPath);
+    console.log('File saved at:', uploadPath);
 
-    const imagePath = path.join(__dirname, '../uploads', req.file.filename);
-
-    // Extract text from the screenshot using Tesseract.js
+    // extract text from the screenshot using Tesseract.js
     console.log('Starting OCR process...');
-    const ocrResult = await Tesseract.recognize(imagePath, 'eng');
+    const ocrResult = await Tesseract.recognize(uploadPath, 'eng');
     const extractedText = ocrResult.data.text;
 
     console.log('Extracted Text:', extractedText);
 
-    // Prepare the prompt using the extracted text
+    // generate description using OpenAI API
     const prompt = `
       Below is text extracted from a screenshot. Analyze it and generate a concise one-sentence task description based on the content:
 
@@ -60,21 +60,13 @@ router.post('/', upload.single('screenshot'), async (req, res) => {
       ${extractedText}
     `;
 
-    // Send the prompt to OpenAI API
     const openaiResponse = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
         model: 'gpt-4-turbo',
         messages: [
-          {
-            role: 'system',
-            content:
-              'You are an AI assistant that analyzes text extracted from images and generates concise task descriptions.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
+          { role: 'system', content: 'Generate concise descriptions.' },
+          { role: 'user', content: prompt },
         ],
         max_tokens: 100,
       },
@@ -86,13 +78,12 @@ router.post('/', upload.single('screenshot'), async (req, res) => {
       }
     );
 
-    // Extract the generated description
     const description = openaiResponse.data.choices[0].message.content.trim();
 
-    // Save the screenshot data to MongoDB
+    // save screenshot details to MongoDB
     const newScreenshot = new Screenshot({
-      user_id: objectId,
-      screenshot_url: `/uploads/${req.file.filename}`,
+      username,
+      screenshot_url: `/uploads/${filename}`,
       description,
       created_at: new Date(),
     });
@@ -101,12 +92,12 @@ router.post('/', upload.single('screenshot'), async (req, res) => {
 
     console.log('Screenshot saved to database:', newScreenshot);
 
-    // Send the response back to the client
     res.status(201).json(newScreenshot);
   } catch (error) {
-    console.error('Error handling screenshot:', error.response?.data || error.message);
-    res.status(500).json({ error: error.response?.data || error.message });
+    console.error('Error handling screenshot:', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
+
 
 module.exports = router;

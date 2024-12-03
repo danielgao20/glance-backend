@@ -3,23 +3,26 @@ const screenshotsContainer = document.getElementById('screenshots');
 const userIdSpan = document.getElementById('user-id');
 const logoutButton = document.getElementById('logout-button');
 
-// Retrieve username from localStorage
+// retrieve username from localStorage
 const username = localStorage.getItem('username');
-
 if (username) {
-  userIdSpan.textContent = username; // Display the username in the UI
+  userIdSpan.textContent = username;
 } else {
-  // If no username is found, redirect to login for safety
   window.location.href = './login.html';
 }
 
-// Capture screenshot on button click
+// handle screenshot capture
 const captureScreenshot = () => {
   console.log('Requesting screenshot capture...');
-  window.electronAPI.sendMessage('capture-screenshot');
+  
+  // generate unique filename
+  const timestamp = Date.now();
+  const screenshotFilename = `screenshot-${timestamp}.jpg`;
+
+  // request screenshot capture and include the filename
+  window.electronAPI.sendMessage('capture-screenshot', screenshotFilename);
 };
 
-// screenshot capture! so cool!
 window.electronAPI.onMessage('screenshot-captured', async (screenshotPath) => {
   console.log('Screenshot received:', screenshotPath);
 
@@ -27,13 +30,15 @@ window.electronAPI.onMessage('screenshot-captured', async (screenshotPath) => {
   const username = localStorage.getItem('username');
 
   try {
-    // Use fs module exposed by preload.js
     const fs = window.electronAPI.fs;
 
-    // Prepare the file upload
+    // prepare FormData to send to backend
     const formData = new FormData();
-    formData.append('screenshot', fs.createReadStream(screenshotPath)); // Attach the screenshot file
-    formData.append('user_id', username); // Attach the user ID
+    const fileData = await fs.readFile(screenshotPath);
+    const blob = new Blob([fileData], { type: 'image/jpeg' });
+    formData.append('screenshot', blob); // Attach the file
+    formData.append('username', username); // Attach the username
+    formData.append('filename', screenshotPath); // Attach the filename
 
     const response = await fetch('http://localhost:5001/api/screenshots', {
       method: 'POST',
@@ -49,7 +54,7 @@ window.electronAPI.onMessage('screenshot-captured', async (screenshotPath) => {
 
     const data = await response.json();
 
-    // Add screenshot with description to the dashboard
+    // add screenshot with description to the dashboard
     const card = document.createElement('div');
     card.className = 'screenshot-card';
     card.innerHTML = `
@@ -64,7 +69,7 @@ window.electronAPI.onMessage('screenshot-captured', async (screenshotPath) => {
   }
 });
 
-// Listen for screenshot capture error
+// listen for screenshot capture error
 window.electronAPI.onMessage('screenshot-error', (error) => {
   console.error('Error capturing screenshot:', error);
 });
@@ -73,6 +78,6 @@ startSessionButton.addEventListener('click', captureScreenshot);
 
 // handle logout
 logoutButton.addEventListener('click', () => {
-  localStorage.removeItem('token'); // Remove the stored token
-  window.location.href = './login.html'; // Redirect to the login page
+  localStorage.removeItem('token'); // remove the stored token
+  window.location.href = './login.html'; // redirect to the login page
 });

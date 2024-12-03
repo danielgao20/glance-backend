@@ -1,3 +1,11 @@
+# cannot have this
 .env
+
+# dependencies
 node_modules/
+
+# redundancy
 uploads/
+
+# tesseract trained data files
+*.traineddata
