@@ -3,10 +3,10 @@
 Create a `.env` file in backend:
 
 ```
-PORT=3000
-MONGO_URI=mongodb://localhost:27017/yourdbname
-JWT_SECRET=your_secret_key
-OPENAI_API_KEY=your_openai_api_key
+PORT
+MONGO_URI
+JWT_SECRET
+OPENAI_API_KEY
 ```
 
 ### Run app
